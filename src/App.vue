@@ -4,6 +4,7 @@ import { useAmplifyStore } from './stores/amplifyStore'
 import ConfigForm from './components/ConfigForm.vue'
 import AuthForm from './components/AuthForm.vue'
 import MessageCard from './components/MessageCard.vue'
+import MonacoEditor from './components/MonacoEditor.vue'
 
 const store = useAmplifyStore()
 const activeTab = ref<'config' | 'auth'>('config')
@@ -242,30 +243,24 @@ function fillQueryTemplate(templateType: 'todos' | 'messages') {
           <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
             <!-- Query Field -->
             <div class="lg:col-span-2 space-y-1.5">
-              <label for="query" class="block text-xs text-zinc-450 select-none"
-                >Subscription Query</label
-              >
-              <textarea
-                id="query"
+              <div class="block text-xs text-zinc-450 select-none">Subscription Query</div>
+              <MonacoEditor
                 v-model="store.subscriptionQuery"
-                rows="6"
-                placeholder="subscription MySubscription { ... }"
-                class="w-full bg-zinc-900 border border-zinc-850 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 text-zinc-200 rounded-md p-3 text-xs font-mono placeholder-zinc-700 resize-y"
-              ></textarea>
+                language="graphql"
+                height="15rem"
+                :read-only="store.isSubscribed"
+              />
             </div>
 
             <!-- Variables Field -->
             <div class="space-y-1.5">
-              <label for="variables" class="block text-xs text-zinc-450 select-none"
-                >Variables (JSON)</label
-              >
-              <textarea
-                id="variables"
+              <div class="block text-xs text-zinc-450 select-none">Variables (JSON)</div>
+              <MonacoEditor
                 v-model="store.subscriptionVariables"
-                rows="6"
-                placeholder="{}"
-                class="w-full bg-zinc-900 border border-zinc-850 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 text-zinc-200 rounded-md p-3 text-xs font-mono placeholder-zinc-700 resize-y"
-              ></textarea>
+                language="json"
+                height="15rem"
+                :read-only="store.isSubscribed"
+              />
             </div>
           </div>
 
