@@ -117,7 +117,7 @@ From project root:
 
     npm run dev
 
-Open the local URL printed by Vite (usually http://localhost:5173).
+Open the local URL printed by Vite (usually <http://localhost:5173>).
 
 ### Configure the app
 
