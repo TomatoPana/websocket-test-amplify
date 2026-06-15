@@ -1,8 +1,13 @@
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, onMounted, onUnmounted, type LegacyConfig } from 'vue'
 import { defineStore } from 'pinia'
-import { Amplify } from 'aws-amplify'
+import { Amplify, type ResourcesConfig } from 'aws-amplify'
 import { generateClient } from 'aws-amplify/api'
-import { signIn, signOut, getCurrentUser, fetchAuthSession } from 'aws-amplify/auth'
+import { signIn, signOut, getCurrentUser } from 'aws-amplify/auth'
+import type { AmplifyOutputsUnknown } from 'aws-amplify/adapter-core/internals'
+import type {
+  GraphqlSubscriptionMessage,
+  GraphqlSubscriptionResult
+} from '@aws-amplify/api-graphql'
 
 export interface AmplifyConfig {
   endpoint: string
@@ -18,7 +23,7 @@ export interface SubscriptionMessage {
   timestamp: string
   type: 'info' | 'message' | 'error' | 'success'
   title: string
-  content: any
+  content: unknown
 }
 
 const STORAGE_KEY = 'amplify_sub_config'
@@ -45,105 +50,111 @@ const DEFAULT_QUERY = `subscription OnCreateTodo {
 
 const DEFAULT_VARS = `{}`
 
-export const useAmplifyStore = defineStore('amplify', () => {
+type ActiveSubscription = {
+  unsubscribe: () => void
+}
+
+export const useAmplifyStore = defineStore( 'amplify', () => {
   // Config state
-  const config = ref<AmplifyConfig>({ ...DEFAULT_CONFIG })
-  const isConfigured = ref(false)
-  const configError = ref<string | null>(null)
+  const config = ref<AmplifyConfig>( { ...DEFAULT_CONFIG } )
+  const isConfigured = ref( false )
+  const configError = ref<string | null>( null )
 
   // Auth state
-  const user = ref<{ username: string; userId: string } | null>(null)
-  const authLoading = ref(false)
-  const authError = ref<string | null>(null)
+  const user = ref<{ username: string; userId: string } | null>( null )
+  const authLoading = ref( false )
+  const authError = ref<string | null>( null )
 
   // Network state
-  const isOnline = ref(typeof navigator !== 'undefined' ? navigator.onLine : true)
+  const isOnline = ref( typeof navigator !== 'undefined' ? navigator.onLine : true )
 
   // Subscription state
-  const subscriptionQuery = ref(DEFAULT_QUERY)
-  const subscriptionVariables = ref(DEFAULT_VARS)
-  const messages = ref<SubscriptionMessage[]>([])
-  const isSubscribed = ref(false)
-  const subscriptionStatus = ref<'idle' | 'connecting' | 'active' | 'error' | 'disconnected'>('idle')
-  const subscriptionError = ref<string | null>(null)
+  const subscriptionQuery = ref( DEFAULT_QUERY )
+  const subscriptionVariables = ref( DEFAULT_VARS )
+  const messages = ref<SubscriptionMessage[]>( [] )
+  const isSubscribed = ref( false )
+  const subscriptionStatus = ref<'idle' | 'connecting' | 'active' | 'error' | 'disconnected'>( 'idle' )
+  const subscriptionError = ref<string | null>( null )
 
   // Reference to active subscription instance
-  let activeSubscription: any = null
+  let activeSubscription: ActiveSubscription | null = null
 
   // Initialize from LocalStorage
-  function loadFromStorage() {
+  function loadFromStorage () {
     try {
-      const savedConfig = localStorage.getItem(STORAGE_KEY)
-      if (savedConfig) {
-        config.value = { ...DEFAULT_CONFIG, ...JSON.parse(savedConfig) }
+      const savedConfig = localStorage.getItem( STORAGE_KEY )
+      if ( savedConfig ) {
+        config.value = { ...DEFAULT_CONFIG, ...JSON.parse( savedConfig ) }
       }
-      
-      const savedQuery = localStorage.getItem(QUERY_STORAGE_KEY)
-      if (savedQuery) {
+
+      const savedQuery = localStorage.getItem( QUERY_STORAGE_KEY )
+      if ( savedQuery ) {
         subscriptionQuery.value = savedQuery
       }
 
-      const savedVars = localStorage.getItem(VARS_STORAGE_KEY)
-      if (savedVars) {
+      const savedVars = localStorage.getItem( VARS_STORAGE_KEY )
+      if ( savedVars ) {
         subscriptionVariables.value = savedVars
       }
-    } catch (e) {
-      console.error('Failed to load from localStorage', e)
+    } catch ( e ) {
+      console.error( 'Failed to load from localStorage', e )
     }
   }
 
   // Save config to LocalStorage
-  function saveConfig() {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(config.value))
-    localStorage.setItem(QUERY_STORAGE_KEY, subscriptionQuery.value)
-    localStorage.setItem(VARS_STORAGE_KEY, subscriptionVariables.value)
+  function saveConfig () {
+    localStorage.setItem( STORAGE_KEY, JSON.stringify( config.value ) )
+    localStorage.setItem( QUERY_STORAGE_KEY, subscriptionQuery.value )
+    localStorage.setItem( VARS_STORAGE_KEY, subscriptionVariables.value )
   }
 
   // Network status handlers
-  function updateOnlineStatus() {
+  function updateOnlineStatus () {
     isOnline.value = navigator.onLine
-    addMessage({
+    addMessage( {
       type: navigator.onLine ? 'success' : 'error',
       title: 'Network Connection Status Changed',
       content: { online: navigator.onLine, message: navigator.onLine ? 'Browser is online' : 'Browser is offline' }
-    })
+    } )
   }
 
   // Configure Amplify
-  async function configureAmplify() {
+  async function configureAmplify () {
     configError.value = null
     isConfigured.value = false
     user.value = null
-    
-    if (!config.value.endpoint) {
+
+    if ( !config.value.endpoint ) {
       configError.value = 'GraphQL Endpoint is required'
       return false
     }
 
     try {
-      const amplifyConfig: any = {
+      const amplifyConfig: ResourcesConfig | LegacyConfig | AmplifyOutputsUnknown = {
         API: {
           GraphQL: {
             endpoint: config.value.endpoint,
             region: config.value.region,
-            defaultAuthMode: 
+            defaultAuthMode:
               config.value.authMode === 'API_KEY' ? 'apiKey' :
-              config.value.authMode === 'AMAZON_COGNITO_USER_POOLS' ? 'userPool' :
-              config.value.authMode === 'AWS_IAM' ? 'iam' : 'oidc'
+                config.value.authMode === 'AMAZON_COGNITO_USER_POOLS' ? 'userPool' :
+                  config.value.authMode === 'AWS_IAM' ? 'iam' : 'oidc'
           }
         }
       }
 
-      if (config.value.authMode === 'API_KEY') {
-        if (!config.value.apiKey) {
+      if ( config.value.authMode === 'API_KEY' ) {
+        if ( !config.value.apiKey ) {
           configError.value = 'API Key is required for API_KEY authentication mode'
           return false
         }
-        amplifyConfig.API.GraphQL.apiKey = config.value.apiKey
+        if ( amplifyConfig.API !== undefined && amplifyConfig.API.GraphQL !== undefined ) {
+          amplifyConfig.API.GraphQL.apiKey = config.value.apiKey
+        }
       }
 
-      if (config.value.authMode === 'AMAZON_COGNITO_USER_POOLS') {
-        if (!config.value.userPoolId || !config.value.userPoolClientId) {
+      if ( config.value.authMode === 'AMAZON_COGNITO_USER_POOLS' ) {
+        if ( !config.value.userPoolId || !config.value.userPoolClientId ) {
           configError.value = 'User Pool ID and Client ID are required for Cognito mode'
           return false
         }
@@ -156,10 +167,10 @@ export const useAmplifyStore = defineStore('amplify', () => {
       }
 
       // Configure
-      Amplify.configure(amplifyConfig)
+      Amplify.configure( amplifyConfig )
       isConfigured.value = true
       saveConfig()
-      addMessage({
+      addMessage( {
         type: 'success',
         title: 'Amplify Configured Successfully',
         content: {
@@ -167,138 +178,138 @@ export const useAmplifyStore = defineStore('amplify', () => {
           authMode: config.value.authMode,
           region: config.value.region
         }
-      })
+      } )
 
       // Check if user is already signed in
-      if (config.value.authMode === 'AMAZON_COGNITO_USER_POOLS') {
+      if ( config.value.authMode === 'AMAZON_COGNITO_USER_POOLS' ) {
         await checkCurrentUser()
       }
 
       return true
-    } catch (err: any) {
-      console.error(err)
-      configError.value = err.message || 'Failed to configure AWS Amplify'
-      addMessage({
+    } catch ( err ) {
+      console.error( err )
+      configError.value = ( err as { message?: string } ).message || 'Failed to configure AWS Amplify'
+      addMessage( {
         type: 'error',
         title: 'Configuration Error',
         content: configError.value
-      })
+      } )
       return false
     }
   }
 
   // Authentication methods
-  async function checkCurrentUser() {
+  async function checkCurrentUser () {
     try {
       const authUser = await getCurrentUser()
       user.value = {
         username: authUser.username,
         userId: authUser.userId
       }
-      addMessage({
+      addMessage( {
         type: 'info',
         title: 'Cognito Session Found',
         content: { username: authUser.username, userId: authUser.userId }
-      })
-    } catch (err) {
+      } )
+    } catch {
       user.value = null
     }
   }
 
-  async function login(usernameValue: string, passwordValue: string) {
-    if (!isConfigured.value) {
+  async function login ( usernameValue: string, passwordValue: string ) {
+    if ( !isConfigured.value ) {
       authError.value = 'Amplify is not configured yet'
       return false
     }
-    
+
     authLoading.value = true
     authError.value = null
-    
+
     try {
-      const { isSignedIn, nextStep } = await signIn({
+      const { isSignedIn, nextStep } = await signIn( {
         username: usernameValue,
         password: passwordValue
-      })
+      } )
 
-      if (isSignedIn) {
+      if ( isSignedIn ) {
         await checkCurrentUser()
-        addMessage({
+        addMessage( {
           type: 'success',
           title: 'Signed In Successfully',
           content: { username: usernameValue }
-        })
+        } )
         return true
       } else {
-        authError.value = `Sign in requires next step: ${nextStep.signInStep}`
-        addMessage({
+        authError.value = `Sign in requires next step: ${ nextStep.signInStep }`
+        addMessage( {
           type: 'error',
           title: 'Sign In Incomplete',
           content: authError.value
-        })
+        } )
         return false
       }
-    } catch (err: any) {
-      console.error(err)
-      authError.value = err.message || 'Authentication failed'
-      addMessage({
+    } catch ( err ) {
+      console.error( err )
+      authError.value = ( err as { message?: string } ).message || 'Authentication failed'
+      addMessage( {
         type: 'error',
         title: 'Authentication Failed',
         content: authError.value
-      })
+      } )
       return false
     } finally {
       authLoading.value = false
     }
   }
 
-  async function logout() {
+  async function logout () {
     authLoading.value = true
     authError.value = null
     try {
       await signOut()
       const oldUsername = user.value?.username
       user.value = null
-      addMessage({
+      addMessage( {
         type: 'info',
         title: 'Signed Out Successfully',
         content: { username: oldUsername }
-      })
-    } catch (err: any) {
-      console.error(err)
-      authError.value = err.message || 'Sign out failed'
-      addMessage({
+      } )
+    } catch ( err ) {
+      console.error( err )
+      authError.value = ( err as { message?: string } ).message || 'Sign out failed'
+      addMessage( {
         type: 'error',
         title: 'Sign Out Failed',
         content: authError.value
-      })
+      } )
     } finally {
       authLoading.value = false
     }
   }
 
   // Log message helper
-  function addMessage(msg: Omit<SubscriptionMessage, 'id' | 'timestamp'>) {
+  function addMessage ( msg: Omit<SubscriptionMessage, 'id' | 'timestamp'> ) {
     const message: SubscriptionMessage = {
-      id: Math.random().toString(36).substring(2, 9),
+      id: Math.random().toString( 36 ).substring( 2, 9 ),
       timestamp: new Date().toLocaleTimeString(),
       ...msg
     }
     // Limit to 200 messages to prevent memory issues
-    messages.value = [message, ...messages.value].slice(0, 200)
+    messages.value = [ message, ...messages.value ].slice( 0, 200 )
   }
 
-  function clearMessages() {
+  function clearMessages () {
     messages.value = []
   }
 
   // Subscription methods
-  function startSubscription() {
-    if (!isConfigured.value) {
+  function startSubscription () {
+    if ( !isConfigured.value ) {
       subscriptionError.value = 'Amplify must be configured before starting a subscription.'
       return
     }
 
-    if (activeSubscription) {
+    if ( activeSubscription ) {
       stopSubscription()
     }
 
@@ -306,22 +317,22 @@ export const useAmplifyStore = defineStore('amplify', () => {
     subscriptionStatus.value = 'connecting'
     isSubscribed.value = true
 
-    addMessage({
+    addMessage( {
       type: 'info',
       title: 'Connecting Subscription',
       content: { query: subscriptionQuery.value, variables: subscriptionVariables.value }
-    })
+    } )
 
     saveConfig()
 
     try {
       // Parse variables
-      let parsedVariables = {}
-      if (subscriptionVariables.value.trim()) {
+      let parsedVariables: Record<string, unknown> = {}
+      if ( subscriptionVariables.value.trim() ) {
         try {
-          parsedVariables = JSON.parse(subscriptionVariables.value)
-        } catch (e: any) {
-          throw new Error(`Invalid variables JSON: ${e.message}`)
+          parsedVariables = JSON.parse( subscriptionVariables.value ) as Record<string, unknown>
+        } catch ( e ) {
+          throw new Error( `Invalid variables JSON: ${ ( e as { message?: string } ).message }` )
         }
       }
 
@@ -329,78 +340,84 @@ export const useAmplifyStore = defineStore('amplify', () => {
       const client = generateClient()
 
       // Start subscription
-      const subObservable = client.graphql({
+      const subObservable = client.graphql( {
         query: subscriptionQuery.value,
         variables: parsedVariables
-      }) as any
+      } )
+
+      if ( typeof ( subObservable as { subscribe?: unknown } ).subscribe !== 'function' ) {
+        throw new Error( 'GraphQL operation is not a subscription. Use a `subscription` query.' )
+      }
+
+      const subscriptionStream = subObservable as GraphqlSubscriptionResult<Record<string, unknown>>
 
       // Observable returns a subscribe function
-      activeSubscription = subObservable.subscribe({
-        next: (response: any) => {
+      activeSubscription = subscriptionStream.subscribe( {
+        next: ( response: GraphqlSubscriptionMessage<Record<string, unknown>> ) => {
           subscriptionStatus.value = 'active'
-          addMessage({
+          addMessage( {
             type: 'message',
             title: 'Data Received',
-            content: response.data || response
-          })
+            content: response.data
+          } )
         },
-        error: (err: any) => {
-          console.error('Subscription error:', err)
+        error: ( err: unknown ) => {
+          console.error( 'Subscription error:', err )
           subscriptionStatus.value = 'error'
-          subscriptionError.value = JSON.stringify(err)
-          addMessage({
+          subscriptionError.value = err instanceof Error ? err.message : JSON.stringify( err )
+          addMessage( {
             type: 'error',
             title: 'Subscription Error',
             content: err
-          })
+          } )
         },
         complete: () => {
           subscriptionStatus.value = 'disconnected'
           isSubscribed.value = false
-          addMessage({
+          addMessage( {
             type: 'info',
             title: 'Subscription Completed by Server',
             content: null
-          })
+          } )
         }
-      })
+      } )
 
       // If we got here, we're successfully listening (or at least sent the connection request)
       // Amplify subscriptions don't have a direct "onConnect" callback in Gen 2 API client,
       // but we status it active as it gets ready or on the first payload,
       // we'll set it to active right away to indicate the socket is initiated.
       subscriptionStatus.value = 'active'
-      
-      addMessage({
+
+      addMessage( {
         type: 'success',
         title: 'Subscription Socket Listening',
         content: 'GraphQL Subscription listener established'
-      })
+      } )
 
-    } catch (err: any) {
-      console.error(err)
+    } catch ( err ) {
+      console.error( err )
       subscriptionStatus.value = 'error'
-      subscriptionError.value = err.message || 'Failed to start subscription'
+      subscriptionError.value = ( err as { message?: string } ).message || 'Failed to start subscription'
       isSubscribed.value = false
-      addMessage({
+      addMessage( {
         type: 'error',
         title: 'Failed to Initiate Subscription',
         content: subscriptionError.value
-      })
+      } )
     }
   }
 
-  function stopSubscription() {
-    if (activeSubscription) {
+  function stopSubscription () {
+    if ( activeSubscription ) {
       try {
         activeSubscription.unsubscribe()
-        addMessage({
+        addMessage( {
           type: 'info',
           title: 'Subscription Cancelled',
           content: 'Unsubscribed from socket stream'
-        })
-      } catch (err: any) {
-        console.error('Unsubscribe error:', err)
+        } )
+      } catch ( err ) {
+        console.error( 'Unsubscribe error:', err )
       }
       activeSubscription = null
     }
@@ -409,23 +426,23 @@ export const useAmplifyStore = defineStore('amplify', () => {
   }
 
   // Lifecycle
-  onMounted(() => {
+  onMounted( () => {
     loadFromStorage()
-    if (typeof window !== 'undefined') {
-      window.addEventListener('online', updateOnlineStatus)
-      window.addEventListener('offline', updateOnlineStatus)
+    if ( typeof window !== 'undefined' ) {
+      window.addEventListener( 'online', updateOnlineStatus )
+      window.addEventListener( 'offline', updateOnlineStatus )
       // initial check
       isOnline.value = navigator.onLine
     }
-  })
+  } )
 
-  onUnmounted(() => {
-    if (typeof window !== 'undefined') {
-      window.removeEventListener('online', updateOnlineStatus)
-      window.removeEventListener('offline', updateOnlineStatus)
+  onUnmounted( () => {
+    if ( typeof window !== 'undefined' ) {
+      window.removeEventListener( 'online', updateOnlineStatus )
+      window.removeEventListener( 'offline', updateOnlineStatus )
     }
     stopSubscription()
-  })
+  } )
 
   return {
     // Config
@@ -433,17 +450,17 @@ export const useAmplifyStore = defineStore('amplify', () => {
     isConfigured,
     configError,
     configureAmplify,
-    
+
     // Auth
     user,
     authLoading,
     authError,
     login,
     logout,
-    
+
     // Network
     isOnline,
-    
+
     // Subscription
     subscriptionQuery,
     subscriptionVariables,
@@ -456,4 +473,4 @@ export const useAmplifyStore = defineStore('amplify', () => {
     clearMessages,
     addMessage
   }
-})
+} )
